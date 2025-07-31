@@ -3,301 +3,211 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Camera App met Camera Selectie & Font</title>
-<link href="https://fonts.googleapis.com/css2?family=Poppins&display=swap" rel="stylesheet" />
+<title>Camera app met persistentie</title>
 <style>
-  body {
-    font-family: 'Poppins', sans-serif;
-    margin: 0;
-    padding: 1rem;
-    background: #f0f4f8;
-    text-align: center;
-    color: #222;
-  }
-  h1 {
-    margin-bottom: 0.5rem;
-  }
-  select {
-    font-family: 'Poppins', sans-serif;
-    font-size: 1.1rem;
-    padding: 0.4rem 0.8rem;
-    border-radius: 6px;
-    border: 1.8px solid #007bff;
-    background: white;
-    color: #007bff;
-    cursor: pointer;
-  }
-  #selectedCameraName {
-    font-weight: 700;
-    font-size: 1.25rem;
-    color: #007bff;
-    margin-top: 0.3rem;
-    margin-bottom: 1rem;
-    display: inline-block;
-  }
-  video, canvas {
-    width: 100%;
-    max-width: 480px;
-    border-radius: 12px;
-    border: 3px solid #007bff;
-    margin-bottom: 1rem;
-    background: black;
-  }
-  input[type=range] {
-    width: 280px;
-    margin: 0.5rem 0 1rem;
-  }
-  button {
-    font-family: 'Poppins', sans-serif;
-    font-weight: 600;
-    font-size: 1rem;
-    background-color: #007bff;
-    color: white;
-    border: none;
-    border-radius: 7px;
-    padding: 0.5rem 1.2rem;
-    margin: 0.3rem;
-    cursor: pointer;
-    transition: background-color 0.25s ease;
-  }
-  button:hover {
-    background-color: #0056b3;
-  }
-  #gallery {
-    margin-top: 2rem;
-    max-width: 500px;
-    margin-left: auto;
-    margin-right: auto;
-  }
-  .item {
-    margin-bottom: 1.5rem;
-    border: 2px solid #007bff;
-    border-radius: 10px;
-    padding: 0.5rem;
-    background: white;
-    position: relative;
-  }
-  .item video, .item img {
-    max-width: 100%;
-    border-radius: 8px;
-  }
-  .item a, .item button {
-    margin-top: 0.5rem;
-    display: inline-block;
-    font-size: 0.9rem;
-  }
-  .item button {
-    background-color: #dc3545;
-    margin-left: 1rem;
-    border: none;
-    padding: 0.3rem 0.8rem;
-  }
-  .item button:hover {
-    background-color: #a71d2a;
-  }
+  body { font-family: Arial, sans-serif; background: #f0f0f0; margin: 0; padding: 20px; }
+  video, img { max-width: 100%; border-radius: 8px; }
+  #controls { margin: 10px 0; }
+  button { margin: 5px; padding: 10px 15px; font-size: 16px; border: none; border-radius: 5px; cursor: pointer; }
+  button.record { background: #e74c3c; color: white; }
+  button.stop { background: #2ecc71; color: white; }
+  button.share { background: #3498db; color: white; }
+  button.download { background: #f39c12; color: white; }
+  button.delete { background: #95a5a6; color: white; }
+  .media-item { margin-bottom: 15px; padding: 10px; background: white; border-radius: 8px; }
 </style>
 </head>
 <body>
 
-<h1>📷 Camera App</h1>
+<h1>Camera app met persistentie</h1>
 
-<label for="cameraSelect">Kies camera:</label>
-<br />
-<select id="cameraSelect"></select>
+<video id="preview" autoplay playsinline></video>
 
-<p>Geselecteerde camera: <span id="selectedCameraName">-</span></p>
-
-<video id="preview" autoplay playsinline muted></video>
-<br />
-
-<label for="zoomSlider">Zoom:</label><br />
-<input type="range" id="zoomSlider" min="1" max="1" step="0.1" disabled />
-
-<div>
-  <button onclick="takePhoto()">📸 Foto maken</button>
-  <button id="recordBtn" onclick="toggleRecording()">🎥 Start Video</button>
+<div id="controls">
+  <button id="btnPhoto" class="record">Foto maken</button>
+  <button id="btnStartVideo" class="record">Start Video</button>
+  <button id="btnStopVideo" class="stop" disabled>Stop Video</button>
 </div>
 
-<div id="gallery">
-  <h2>Opnames</h2>
-  <div id="mediaList"></div>
-</div>
+<h2>Opnames</h2>
+<div id="mediaList"></div>
 
 <script>
+(async () => {
   const preview = document.getElementById('preview');
-  const cameraSelect = document.getElementById('cameraSelect');
-  const selectedCameraName = document.getElementById('selectedCameraName');
-  const zoomSlider = document.getElementById('zoomSlider');
+  const btnPhoto = document.getElementById('btnPhoto');
+  const btnStartVideo = document.getElementById('btnStartVideo');
+  const btnStopVideo = document.getElementById('btnStopVideo');
   const mediaList = document.getElementById('mediaList');
-  const recordBtn = document.getElementById('recordBtn');
 
-  let currentStream = null;
-  let mediaRecorder = null;
-  let chunks = [];
-  let isRecording = false;
+  // Open IndexedDB
+  const dbName = 'cameraAppDB';
+  const storeName = 'mediaStore';
+  let db;
 
-  async function getCameras() {
-    try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const videoDevices = devices.filter(d => d.kind === 'videoinput');
-      cameraSelect.innerHTML = '';
-      videoDevices.forEach((device, index) => {
-        const option = document.createElement('option');
-        option.value = device.deviceId;
-        option.text = device.label || `Camera ${index + 1}`;
-        cameraSelect.appendChild(option);
-      });
-    } catch (err) {
-      alert('Kon apparaten niet opvragen: ' + err.message);
-    }
+  function openDB() {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(dbName, 1);
+      request.onerror = () => reject('DB openen mislukt');
+      request.onsuccess = () => {
+        db = request.result;
+        resolve();
+      };
+      request.onupgradeneeded = e => {
+        db = e.target.result;
+        if (!db.objectStoreNames.contains(storeName)) {
+          db.createObjectStore(storeName, { keyPath: 'id', autoIncrement: true });
+        }
+      };
+    });
   }
 
-  async function switchCamera(deviceId) {
-    if (currentStream) {
-      currentStream.getTracks().forEach(track => track.stop());
+  function saveMedia(blob, type) {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(storeName, 'readwrite');
+      const store = tx.objectStore(storeName);
+      const item = { blob, type, date: Date.now() };
+      const req = store.add(item);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject('Opslaan mislukt');
+    });
+  }
+
+  function deleteMedia(id) {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(storeName, 'readwrite');
+      const store = tx.objectStore(storeName);
+      const req = store.delete(id);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject('Verwijderen mislukt');
+    });
+  }
+
+  function getAllMedia() {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(storeName, 'readonly');
+      const store = tx.objectStore(storeName);
+      const req = store.getAll();
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject('Lezen mislukt');
+    });
+  }
+
+  function createMediaElement(item) {
+    const url = URL.createObjectURL(item.blob);
+    const div = document.createElement('div');
+    div.className = 'media-item';
+
+    if (item.type === 'photo') {
+      const img = document.createElement('img');
+      img.src = url;
+      div.appendChild(img);
+    } else if (item.type === 'video') {
+      const video = document.createElement('video');
+      video.controls = true;
+      video.src = url;
+      div.appendChild(video);
     }
 
-    let constraints = {
-      video: deviceId ? { deviceId: { exact: deviceId } } : true,
-      audio: true
-    };
-
-    try {
-      currentStream = await navigator.mediaDevices.getUserMedia(constraints);
-      preview.srcObject = currentStream;
-      preview.muted = true;
-      await setupZoom();
-    } catch (err) {
-      console.warn("Fout met deviceId:", err);
-      if (deviceId) {
+    // Delen knop
+    const btnShare = document.createElement('button');
+    btnShare.textContent = 'Delen';
+    btnShare.className = 'share';
+    btnShare.onclick = async () => {
+      if (navigator.canShare && navigator.canShare({ files: [new File([item.blob], item.type === 'photo' ? 'foto.jpg' : 'video.webm', { type: item.blob.type })] })) {
         try {
-          currentStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-          preview.srcObject = currentStream;
-          preview.muted = true;
-          await setupZoom();
-        } catch (err2) {
-          alert("Kan geen camera openen: " + err2.message);
+          await navigator.share({
+            files: [new File([item.blob], item.type === 'photo' ? 'foto.jpg' : 'video.webm', { type: item.blob.type })],
+            title: item.type === 'photo' ? 'Foto delen' : 'Video delen',
+            text: 'Bekijk dit!',
+          });
+        } catch (err) {
+          alert('Delen mislukt: ' + err);
         }
       } else {
-        alert("Kan geen camera openen: " + err.message);
+        alert('Delen niet ondersteund op dit apparaat.');
       }
-    }
+    };
+    div.appendChild(btnShare);
+
+    // Download knop
+    const btnDownload = document.createElement('button');
+    btnDownload.textContent = 'Downloaden';
+    btnDownload.className = 'download';
+    btnDownload.onclick = () => {
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = item.type === 'photo' ? 'foto.jpg' : 'video.webm';
+      a.click();
+    };
+    div.appendChild(btnDownload);
+
+    // Verwijder knop
+    const btnDelete = document.createElement('button');
+    btnDelete.textContent = 'Verwijderen';
+    btnDelete.className = 'delete';
+    btnDelete.onclick = async () => {
+      URL.revokeObjectURL(url);
+      await deleteMedia(item.id);
+      mediaList.removeChild(div);
+    };
+    div.appendChild(btnDelete);
+
+    mediaList.appendChild(div);
   }
 
-  async function setupZoom() {
-    if (!currentStream) return;
-    const [videoTrack] = currentStream.getVideoTracks();
-    if (!videoTrack) return;
-    const capabilities = videoTrack.getCapabilities();
-    if (capabilities.zoom) {
-      zoomSlider.min = capabilities.zoom.min;
-      zoomSlider.max = capabilities.zoom.max;
-      zoomSlider.step = capabilities.zoom.step || 0.1;
-      zoomSlider.value = videoTrack.getSettings().zoom || capabilities.zoom.min;
-      zoomSlider.disabled = false;
+  await openDB();
 
-      zoomSlider.oninput = () => {
-        videoTrack.applyConstraints({ advanced: [{ zoom: zoomSlider.value }] });
-      };
-    } else {
-      zoomSlider.disabled = true;
-    }
-  }
+  // Laad opgeslagen media bij start
+  const savedMedia = await getAllMedia();
+  savedMedia.forEach(createMediaElement);
 
-  cameraSelect.onchange = () => {
-    switchCamera(cameraSelect.value);
-    const selectedText = cameraSelect.options[cameraSelect.selectedIndex].text;
-    selectedCameraName.textContent = selectedText;
-  };
+  // Camera stream
+  const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1920, height: 1080 }, audio: true });
+  preview.srcObject = stream;
 
-  async function init() {
-    await getCameras();
-    if (cameraSelect.options.length > 0) {
-      switchCamera(cameraSelect.value);
-      selectedCameraName.textContent = cameraSelect.options[cameraSelect.selectedIndex]?.text || '-';
-    } else {
-      switchCamera(null);
-      selectedCameraName.textContent = '-';
-    }
-  }
-
-  function takePhoto() {
+  btnPhoto.onclick = () => {
     const canvas = document.createElement('canvas');
     canvas.width = preview.videoWidth;
     canvas.height = preview.videoHeight;
     const ctx = canvas.getContext('2d');
     ctx.drawImage(preview, 0, 0, canvas.width, canvas.height);
-    canvas.toBlob(blob => {
-      saveMedia(blob, 'photo');
+    canvas.toBlob(async blob => {
+      const id = await saveMedia(blob, 'photo');
+      createMediaElement({ id, blob, type: 'photo' });
     }, 'image/jpeg', 0.95);
-  }
+  };
 
-  function toggleRecording() {
-    if (!isRecording) {
-      startRecording();
-    } else {
-      stopRecording();
-    }
-  }
+  let mediaRecorder;
+  let chunks = [];
 
-  function startRecording() {
+  btnStartVideo.onclick = () => {
     chunks = [];
-    try {
-      mediaRecorder = new MediaRecorder(currentStream, { mimeType: 'video/webm; codecs=vp9' });
-    } catch {
-      mediaRecorder = new MediaRecorder(currentStream);
-    }
-    mediaRecorder.ondataavailable = e => chunks.push(e.data);
-    mediaRecorder.onstop = () => {
+    mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8,opus' });
+    mediaRecorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+    mediaRecorder.onstop = async () => {
       const blob = new Blob(chunks, { type: 'video/webm' });
-      saveMedia(blob, 'video');
+      const id = await saveMedia(blob, 'video');
+      createMediaElement({ id, blob, type: 'video' });
     };
     mediaRecorder.start();
-    isRecording = true;
-    recordBtn.textContent = "⏹️ Stop Video";
-  }
+    btnStartVideo.disabled = true;
+    btnStopVideo.disabled = false;
+  };
 
-  function stopRecording() {
-    mediaRecorder.stop();
-    isRecording = false;
-    recordBtn.textContent = "🎥 Start Video";
-  }
-
-  function saveMedia(blob, type) {
-    const url = URL.createObjectURL(blob);
-    const item = document.createElement('div');
-    item.className = 'item';
-
-    if (type === 'photo') {
-      const img = document.createElement('img');
-      img.src = url;
-      item.appendChild(img);
-    } else if (type === 'video') {
-      const vid = document.createElement('video');
-      vid.src = url;
-      vid.controls = true;
-      item.appendChild(vid);
+  btnStopVideo.onclick = () => {
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+      mediaRecorder.stop();
+      btnStartVideo.disabled = false;
+      btnStopVideo.disabled = true;
     }
+  };
 
-    const downloadBtn = document.createElement('a');
-    downloadBtn.href = url;
-    downloadBtn.download = type + '_' + new Date().getTime() + (type === 'photo' ? '.jpg' : '.webm');
-    downloadBtn.textContent = '⬇️ Download';
-
-    const deleteBtn = document.createElement('button');
-    deleteBtn.textContent = '🗑️ Verwijder';
-    deleteBtn.onclick = () => {
-      URL.revokeObjectURL(url);
-      item.remove();
-    };
-
-    item.appendChild(downloadBtn);
-    item.appendChild(deleteBtn);
-    mediaList.prepend(item);
-  }
-
-  init();
+})();
 </script>
+
+</body>
+</html>
 
 </body>
 </html>
