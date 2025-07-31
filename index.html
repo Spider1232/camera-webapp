@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Camera app met persistentie</title>
+<title>Camera app met mute preview en opslag</title>
 <style>
-  body { font-family: Arial, sans-serif; background: #f0f0f0; margin: 0; padding: 20px; }
+  body { font-family: Arial, sans-serif; background: #f0f0f0; padding: 20px; }
   video, img { max-width: 100%; border-radius: 8px; }
   #controls { margin: 10px 0; }
   button { margin: 5px; padding: 10px 15px; font-size: 16px; border: none; border-radius: 5px; cursor: pointer; }
@@ -19,9 +19,9 @@
 </head>
 <body>
 
-<h1>Camera app met persistentie</h1>
+<h1>Camera app met mute preview en opslag</h1>
 
-<video id="preview" autoplay playsinline></video>
+<video id="preview" autoplay playsinline muted></video>
 
 <div id="controls">
   <button id="btnPhoto" class="record">Foto maken</button>
@@ -40,7 +40,7 @@
   const btnStopVideo = document.getElementById('btnStopVideo');
   const mediaList = document.getElementById('mediaList');
 
-  // Open IndexedDB
+  // IndexedDB setup
   const dbName = 'cameraAppDB';
   const storeName = 'mediaStore';
   let db;
@@ -109,7 +109,7 @@
       div.appendChild(video);
     }
 
-    // Delen knop
+    // Deel knop
     const btnShare = document.createElement('button');
     btnShare.textContent = 'Delen';
     btnShare.className = 'share';
@@ -158,13 +158,14 @@
 
   await openDB();
 
-  // Laad opgeslagen media bij start
+  // Media laden bij start
   const savedMedia = await getAllMedia();
   savedMedia.forEach(createMediaElement);
 
-  // Camera stream
+  // Camera stream starten
   const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1920, height: 1080 }, audio: true });
   preview.srcObject = stream;
+  preview.muted = true; // Mute live preview!
 
   btnPhoto.onclick = () => {
     const canvas = document.createElement('canvas');
