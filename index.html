@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Camera app met persistentie</title>
+<style>
+  body { font-family: Arial, sans-serif; background: #f0f0f0; margin: 0; padding: 20px; }
+  video, img { max-width: 100%; border-radius: 8px; }
+  #controls { margin: 10px 0; }
+  button { margin: 5px; padding: 10px 15px; font-size: 16px; border: none; border-radius: 5px; cursor: pointer; }
+  button.record { background: #e74c3c; color: white; }
+  button.stop { background: #2ecc71; color: white; }
+  button.share { background: #3498db; color: white; }
+  button.download { background: #f39c12; color: white; }
+  button.delete { background: #95a5a6; color: white; }
+  .media-item { margin-bottom: 15px; padding: 10px; background: white; border-radius: 8px; }
+</style>
+</head>
+<body>
+
+<h1>Camera app met persistentie</h1>
+
+<video id="preview" autoplay playsinline></video>
+
+<div id="controls">
+  <button id="btnPhoto" class="record">Foto maken</button>
+  <button id="btnStartVideo" class="record">Start Video</button>
+  <button id="btnStopVideo" class="stop" disabled>Stop Video</button>
+</div>
+
+<h2>Opnames</h2>
+<div id="mediaList"></div>
+
+<script>
+(async () => {
+  const preview = document.getElementById('preview');
+  const btnPhoto = document.getElementById('btnPhoto');
+  const btnStartVideo = document.getElementById('btnStartVideo');
+  const btnStopVideo = document.getElementById('btnStopVideo');
+  const mediaList = document.getElementById('mediaList');
+
+  // Open IndexedDB
+  const dbName = 'cameraAppDB';
+  const storeName = 'mediaStore';
+  let db;
+
+  function openDB() {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(dbName, 1);
+      request.onerror = () => reject('DB openen mislukt');
+      request.onsuccess = () => {
+        db = request.result;
+        resolve();
+      };
+      request.onupgradeneeded = e => {
+        db = e.target.result;
+        if (!db.objectStoreNames.contains(storeName)) {
+          db.createObjectStore(storeName, { keyPath: 'id', autoIncrement: true });
+        }
+      };
+    });
+  }
+
+  function saveMedia(blob, type) {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(storeName, 'readwrite');
+      const store = tx.objectStore(storeName);
+      const item = { blob, type, date: Date.now() };
+      const req = store.add(item);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject('Opslaan mislukt');
+    });
+  }
+
+  function deleteMedia(id) {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(storeName, 'readwrite');
+      const store = tx.objectStore(storeName);
+      const req = store.delete(id);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject('Verwijderen mislukt');
+    });
+  }
+
+  function getAllMedia() {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(storeName, 'readonly');
+      const store = tx.objectStore(storeName);
+      const req = store.getAll();
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject('Lezen mislukt');
+    });
+  }
+
+  function createMediaElement(item) {
+    const url = URL.createObjectURL(item.blob);
+    const div = document.createElement('div');
+    div.className = 'media-item';
+
+    if (item.type === 'photo') {
+      const img = document.createElement('img');
+      img.src = url;
+      div.appendChild(img);
+    } else if (item.type === 'video') {
+      const video = document.createElement('video');
+      video.controls = true;
+      video.src = url;
+      div.appendChild(video);
+    }
+
+    // Delen knop
+    const btnShare = document.createElement('button');
+    btnShare.textContent = 'Delen';
+    btnShare.className = 'share';
+    btnShare.onclick = async () => {
+      if (navigator.canShare && navigator.canShare({ files: [new File([item.blob], item.type === 'photo' ? 'foto.jpg' : 'video.webm', { type: item.blob.type })] })) {
+        try {
+          await navigator.share({
+            files: [new File([item.blob], item.type === 'photo' ? 'foto.jpg' : 'video.webm', { type: item.blob.type })],
+            title: item.type === 'photo' ? 'Foto delen' : 'Video delen',
+            text: 'Bekijk dit!',
+          });
+        } catch (err) {
+          alert('Delen mislukt: ' + err);
+        }
+      } else {
+        alert('Delen niet ondersteund op dit apparaat.');
+      }
+    };
+    div.appendChild(btnShare);
+
+    // Download knop
+    const btnDownload = document.createElement('button');
+    btnDownload.textContent = 'Downloaden';
+    btnDownload.className = 'download';
+    btnDownload.onclick = () => {
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = item.type === 'photo' ? 'foto.jpg' : 'video.webm';
+      a.click();
+    };
+    div.appendChild(btnDownload);
+
+    // Verwijder knop
+    const btnDelete = document.createElement('button');
+    btnDelete.textContent = 'Verwijderen';
+    btnDelete.className = 'delete';
+    btnDelete.onclick = async () => {
+      URL.revokeObjectURL(url);
+      await deleteMedia(item.id);
+      mediaList.removeChild(div);
+    };
+    div.appendChild(btnDelete);
+
+    mediaList.appendChild(div);
+  }
+
+  await openDB();
+
+  // Laad opgeslagen media bij start
+  const savedMedia = await getAllMedia();
+  savedMedia.forEach(createMediaElement);
+
+  // Camera stream
+  const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1920, height: 1080 }, audio: true });
+  preview.srcObject = stream;
+
+  btnPhoto.onclick = () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = preview.videoWidth;
+    canvas.height = preview.videoHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(preview, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob(async blob => {
+      const id = await saveMedia(blob, 'photo');
+      createMediaElement({ id, blob, type: 'photo' });
+    }, 'image/jpeg', 0.95);
+  };
+
+  let mediaRecorder;
+  let chunks = [];
+
+  btnStartVideo.onclick = () => {
+    chunks = [];
+    mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8,opus' });
+    mediaRecorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+    mediaRecorder.onstop = async () => {
+      const blob = new Blob(chunks, { type: 'video/webm' });
+      const id = await saveMedia(blob, 'video');
+      createMediaElement({ id, blob, type: 'video' });
+    };
+    mediaRecorder.start();
+    btnStartVideo.disabled = true;
+    btnStopVideo.disabled = false;
+  };
+
+  btnStopVideo.onclick = () => {
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+      mediaRecorder.stop();
+      btnStartVideo.disabled = false;
+      btnStopVideo.disabled = true;
+    }
+  };
+
+})();
+</script>
+
+</body>
+</html>
